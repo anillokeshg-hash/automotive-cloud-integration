@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f6f8; color: #1d2430; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; background: #1d2430; color: #fff; }
+  header h1 { font-size: 18px; margin: 0; }
+  #status { font-size: 13px; opacity: .8; }
+  main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+  h2 { font-size: 15px; margin: 22px 0 8px; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eceff3; white-space: nowrap; }
+  th { background: #fafbfc; font-weight: 600; }
+  tr.alerting td:first-child { border-left: 4px solid #d93025; }
+  .critical { color: #d93025; font-weight: 600; }
+  .warning { color: #b06000; font-weight: 600; }
+  .info { color: #1a73e8; }
+  .resolved { color: #7a8494; }
+  .empty { padding: 14px; color: #7a8494; font-size: 13px; }
+</style>
+</head>
+<body>
+<header><h1>Automotive Cloud - Fleet Dashboard</h1><span id="status">connecting...</span></header>
+<main>
+  <h2>Vehicles</h2>
+  <div class="card"><table id="fleet"><thead><tr>
+    <th>VIN</th><th>Speed km/h</th><th>Engine C</th><th>Fuel %</th><th>Battery V</th><th>Tire psi</th><th>Odometer km</th><th>Last update (UTC)</th><th>Open alerts</th>
+  </tr></thead><tbody></tbody></table></div>
+
+  <h2>Recent alerts</h2>
+  <div class="card"><table id="alerts"><thead><tr>
+    <th>Time (UTC)</th><th>VIN</th><th>Type</th><th>Severity</th><th>Message</th><th>State</th>
+  </tr></thead><tbody></tbody></table></div>
+</main>
+
+<script>
+  // The API key comes from the page address:  /?key=YOUR_KEY  (defaults to the local dev key)
+  const KEY = new URLSearchParams(location.search).get("key") || "dev-key";
+
+  async function get(path) {
+    const response = await fetch(path, { headers: { "X-API-Key": KEY } });
+    if (response.status === 401) throw new Error("Unauthorized - open this page as /?key=YOUR_API_KEY");
+    if (!response.ok) throw new Error("Server error " + response.status);
+    return response.json();
+  }
+
+  function cell(text, className) {
+    const td = document.createElement("td");
+    td.textContent = text;          // textContent (not innerHTML): data can never inject HTML
+    if (className) td.className = className;
+    return td;
+  }
+
+  function fill(tableId, rows) {
+    document.querySelector("#" + tableId + " tbody").replaceChildren(...rows);
+  }
+
+  const time = (iso) => (iso || "").replace("T", " ").replace("+00:00", "");
+  const show = (v) => (v === null || v === undefined ? "-" : v);
+
+  async function refresh() {
+    const status = document.getElementById("status");
+    try {
+      const [fleet, alerts] = await Promise.all([get("/api/vehicles"), get("/api/alerts?limit=15")]);
+
+      fill("fleet", fleet.map((v) => {
+        const tr = document.createElement("tr");
+        if (v.open_alerts > 0) tr.className = "alerting";
+        [v.vin, v.speed_kmh, v.engine_temp_c, v.fuel_pct, v.battery_v, show(v.tire_pressure_psi),
+         Math.round(v.odometer_km), time(v.ts), v.open_alerts].forEach((x) => tr.appendChild(cell(x)));
+        return tr;
+      }));
+      if (!fleet.length) {
+        const tr = document.createElement("tr");
+        const td = cell("No vehicles have reported yet.", "resolved");
+        td.colSpan = 9;
+        tr.appendChild(td);
+        fill("fleet", [tr]);
+      }
+
+      fill("alerts", alerts.map((a) => {
+        const tr = document.createElement("tr");
+        const open = a.resolved_at === null;
+        tr.appendChild(cell(time(a.opened_at)));
+        tr.appendChild(cell(a.vin));
+        tr.appendChild(cell(a.type));
+        tr.appendChild(cell(a.severity, a.severity));
+        tr.appendChild(cell(a.message));
+        tr.appendChild(cell(open ? "OPEN" : "resolved", open ? "critical" : "resolved"));
+        return tr;
+      }));
+
+      status.textContent = "Live - updated " + new Date().toLocaleTimeString();
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>
